@@ -9,16 +9,18 @@ const StatusIndicator = () => {
     try {
       const response = await fetch('http://localhost:5000/api/health', {
         method: 'GET',
-        timeout: 3000
+        timeout: 5000
       });
       
       if (response.ok) {
         const data = await response.json();
-        setBackendStatus(data.status === 'healthy' ? 'online' : 'error');
+        // Check for success flag from backend
+        setBackendStatus(data.success === true ? 'online' : 'error');
       } else {
         setBackendStatus('error');
       }
     } catch (error) {
+      console.error('Backend health check failed:', error);
       setBackendStatus('offline');
     }
     setLastCheck(new Date());

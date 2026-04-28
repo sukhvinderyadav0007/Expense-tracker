@@ -51,15 +51,19 @@ export default function UploadCard() {
     try {
       // Create FormData to send file to backend
       const formData = new FormData();
-      formData.append(file.type === 'application/pdf' ? 'pdf' : 'image', file);
+      
+      // Append file with appropriate field name
+      if (file.type === 'application/pdf') {
+        formData.append('pdf', file);
+      } else {
+        formData.append('image', file);
+      }
 
-      // Call the ML backend API
+      // Call the bill processing API
       const response = await fetch('http://localhost:5000/api/process-bill', {
         method: 'POST',
         body: formData,
-        headers: {
-          // Don't set Content-Type, let browser set it with boundary for FormData
-        }
+        // Don't set Content-Type header - let browser set it with boundary for FormData
       });
 
       if (!response.ok) {
@@ -73,24 +77,32 @@ export default function UploadCard() {
           // Handle manual entry case
           setExtractedData({
             ...result,
-            vendor: 'Enter vendor name',
-            amount: 0,
+            vendor: result.vendor || 'Enter vendor name',
+            amount: result.total_amount || 0,
             category: 'Select category',
             date: getCurrentLocalDate(),
-            items: ['Manual entry required - Install Tesseract OCR for automatic extraction']
+            items: result.items || ['Manual entry required - Install Tesseract OCR for automatic extraction']
           });
           setError('⚠️ Tesseract OCR not installed. Please enter details manually or install Tesseract for automatic extraction.');
         } else {
-          // Normal OCR extraction
-          setExtractedData(result);
+          // Normal extraction success
+          setExtractedData({
+            ...result,
+            vendor: result.vendor || 'Receipt',
+            amount: result.total_amount || 0,
+            category: 'Food & Dining', // Default category
+            date: result.date || getCurrentLocalDate(),
+            items: result.items || []
+          });
           setError(null);
         }
       } else {
         setError(result.error || 'Failed to process bill');
+        setExtractedData(null);
       }
     } catch (err) {
       if (err.name === 'TypeError' && err.message.includes('fetch')) {
-        setError('❌ Cannot connect to ML backend. Please check:\n• Backend server is running on http://localhost:5000\n• No firewall is blocking the connection\n• Try refreshing the page');
+        setError('❌ Cannot connect to backend. Please check:\n• Backend server is running on http://localhost:5000\n• No firewall is blocking the connection\n• Try refreshing the page');
       } else if (err.message.includes('HTTP error')) {
         setError(`❌ Backend error: ${err.message}\nCheck the backend console for details.`);
       } else {
@@ -116,7 +128,7 @@ export default function UploadCard() {
         setError('Please enter a valid amount');
         return;
       }
-      if (!manualData.category) {
+      if (!manualData.category || manualData.category === 'Select category') {
         setError('Please select a category');
         return;
       }
@@ -142,15 +154,39 @@ export default function UploadCard() {
           }
         }
       }
+
+      // Ensure vendor is always set
+      const vendor = dataToSave.vendor || 'Receipt';
       
       const expenseData = {
-        vendor: dataToSave.vendor,
-        amount: parseFloat(dataToSave.amount) || dataToSave.total_amount,
+        vendor: vendor.trim(),
+        amount: parseFloat(dataToSave.amount) || (dataToSave.total_amount ? parseFloat(dataToSave.total_amount) : 0),
         currency: dataToSave.currency || 'INR',
         category: dataToSave.category,
         date: validDate,
         items: dataToSave.items || []
       };
+
+      // Validate expense data before sending
+      if (!expenseData.vendor) {
+        setError('Vendor name is required');
+        setLoading(false);
+        return;
+      }
+
+      if (expenseData.amount <= 0 || isNaN(expenseData.amount)) {
+        setError('Amount must be a valid number greater than 0');
+        setLoading(false);
+        return;
+      }
+
+      if (!expenseData.category) {
+        setError('Category is required');
+        setLoading(false);
+        return;
+      }
+
+      console.log('Sending expense data:', expenseData);
       
       // Send to backend
       const response = await fetch('http://localhost:5000/api/expenses', {
@@ -161,13 +197,18 @@ export default function UploadCard() {
         body: JSON.stringify(expenseData)
       });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      }
+
       const result = await response.json();
       
       if (result.success) {
         setSaved(true);
         
         // Trigger refresh of expenses list and charts
-        window.dispatchEvent(new CustomEvent('expenseAdded', { detail: result.expense }));
+        window.dispatchEvent(new CustomEvent('expenseAdded', { detail: result.data }));
         
         // Show success message and reset
         setTimeout(() => {
@@ -183,12 +224,14 @@ export default function UploadCard() {
             });
             setManualEntry(false);
           }
+          setError("");
         }, 2000);
       } else {
-        throw new Error(result.error || 'Failed to save expense');
+        throw new Error(result.message || result.error || 'Failed to save expense');
       }
       
     } catch (err) {
+      console.error('Save error:', err);
       setError(`Failed to save expense: ${err.message}`);
     } finally {
       setLoading(false);

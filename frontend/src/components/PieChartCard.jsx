@@ -10,10 +10,20 @@ const COLORS = [
 function getPieSegments(data) {
   if (!data || data.length === 0) return [];
   
-  const total = data.reduce((sum, d) => sum + d.value, 0);
+  // Ensure all values are numbers and positive
+  const sanitizedData = data.map(d => ({
+    ...d,
+    value: Math.max(0, Number(d.value) || 0)
+  })).filter(d => d.value > 0);
+  
+  if (sanitizedData.length === 0) return [];
+  
+  const total = sanitizedData.reduce((sum, d) => sum + (Number(d.value) || 0), 0);
+  if (total === 0) return [];
+  
   let startAngle = 0;
-  return data.map((d, index) => {
-    const angle = (d.value / total) * 360;
+  return sanitizedData.map((d, index) => {
+    const angle = ((Number(d.value) || 0) / total) * 360;
     const segment = {
       ...d,
       startAngle,
@@ -32,19 +42,43 @@ export default function PieChartCard() {
 
   const fetchAnalytics = async () => {
     setLoading(true);
-    setError(null);
+    setError(null); // Clear error at start
     try {
       const response = await fetch('http://localhost:5000/api/analytics');
+      
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      
       const result = await response.json();
       
-      if (result.success) {
-        setData(result.categoryData);
+      // Check if response has success flag
+      if (!result || result.success !== true) {
+        // Backend returned but didn't confirm success - treat as empty, not error
+        setData([]);
+        setError(null); // No error, just no data
+        return;
+      }
+
+      // Safely handle categoryData - could be undefined or empty array
+      const categoryData = result.categoryData || [];
+      if (Array.isArray(categoryData) && categoryData.length > 0) {
+        // Ensure all values are numbers
+        const sanitizedData = categoryData.map(d => ({
+          name: String(d.name || 'Unknown'),
+          value: Number(d.value) || 0
+        })).filter(d => d.value > 0);
+        
+        setData(sanitizedData);
+        setError(null); // Ensure error is cleared
       } else {
-        setError('Failed to fetch analytics data');
+        setData([]);
+        setError(null);
       }
     } catch (err) {
-      console.error('Error fetching analytics:', err);
-      setError('Failed to connect to server');
+      console.error('Fetch error:', err);
+      setError('Failed to load analytics');
+      setData([]);
     } finally {
       setLoading(false);
     }
@@ -55,7 +89,7 @@ export default function PieChartCard() {
     
     // Listen for expense changes to refresh data
     const handleExpenseChange = () => {
-      setTimeout(fetchAnalytics, 500); // Small delay to ensure backend is updated
+      setTimeout(fetchAnalytics, 500);
     };
     
     window.addEventListener('expenseAdded', handleExpenseChange);
@@ -96,19 +130,25 @@ export default function PieChartCard() {
       ) : (
         <>
           <svg width={120} height={120} viewBox="0 0 120 120" className="mx-auto">
-            {segments.length > 0 ? (
+            {segments && segments.length > 0 ? (
               segments.map((seg, i) => {
                 const largeArc = seg.endAngle - seg.startAngle > 180 ? 1 : 0;
                 const r = 50;
                 const cx = 60, cy = 60;
+                
+                // Safely convert angles to numbers
+                const startAngle = Number(seg.startAngle) || 0;
+                const endAngle = Number(seg.endAngle) || 0;
+                
                 const start = [
-                  cx + r * Math.cos((Math.PI * seg.startAngle) / 180),
-                  cy + r * Math.sin((Math.PI * seg.startAngle) / 180),
+                  cx + r * Math.cos((Math.PI * startAngle) / 180),
+                  cy + r * Math.sin((Math.PI * startAngle) / 180),
                 ];
                 const end = [
-                  cx + r * Math.cos((Math.PI * seg.endAngle) / 180),
-                  cy + r * Math.sin((Math.PI * seg.endAngle) / 180),
+                  cx + r * Math.cos((Math.PI * endAngle) / 180),
+                  cy + r * Math.sin((Math.PI * endAngle) / 180),
                 ];
+                
                 return (
                   <path
                     key={i}
@@ -133,7 +173,7 @@ export default function PieChartCard() {
                     className="inline-block w-3 h-3 rounded-full" 
                     style={{ background: COLORS[i % COLORS.length] }}
                   ></span>
-                  {d.name}: ₹{d.value.toFixed(0)}
+                  {d.name}: ₹{(Number(d.value) || 0).toFixed(0)}
                 </li>
               ))
             )}

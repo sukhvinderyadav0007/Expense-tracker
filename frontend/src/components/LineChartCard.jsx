@@ -8,19 +8,43 @@ export default function LineChartCard() {
 
   const fetchAnalytics = async () => {
     setLoading(true);
-    setError(null);
+    setError(null); // Clear error at start
     try {
       const response = await fetch('http://localhost:5000/api/analytics');
+      
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      
       const result = await response.json();
       
-      if (result.success) {
-        setData(result.monthlyData);
+      // Check if response has success flag
+      if (!result || result.success !== true) {
+        // Backend returned but didn't confirm success - treat as empty, not error
+        setData([]);
+        setError(null); // No error, just no data
+        return;
+      }
+
+      // Safely handle monthlyData - could be undefined or empty array
+      const monthlyData = result.monthlyData || [];
+      if (Array.isArray(monthlyData) && monthlyData.length > 0) {
+        // Ensure all amounts are numbers
+        const sanitizedData = monthlyData.map(d => ({
+          month: String(d.month || ''),
+          amount: Number(d.amount) || 0
+        })).filter(d => d.amount > 0);
+        
+        setData(sanitizedData);
+        setError(null); // Ensure error is cleared
       } else {
-        setError('Failed to fetch analytics data');
+        setData([]);
+        setError(null);
       }
     } catch (err) {
-      console.error('Error fetching analytics:', err);
-      setError('Failed to connect to server');
+      console.error('Fetch error:', err);
+      setError('Failed to load analytics');
+      setData([]);
     } finally {
       setLoading(false);
     }
@@ -31,7 +55,7 @@ export default function LineChartCard() {
     
     // Listen for expense changes to refresh data
     const handleExpenseChange = () => {
-      setTimeout(fetchAnalytics, 500); // Small delay to ensure backend is updated
+      setTimeout(fetchAnalytics, 500);
     };
     
     window.addEventListener('expenseAdded', handleExpenseChange);
@@ -43,12 +67,19 @@ export default function LineChartCard() {
     };
   }, []);
 
-  const max = data.length > 0 ? Math.max(...data.map(d => d.amount)) : 0;
-  const points = data.length > 0 ? data.map((d, i) => {
-    const x = 20 + (i * 80) / (data.length - 1);
-    const y = 100 - (d.amount / max) * 80;
-    return `${x},${y}`;
-  }).join(" ") : "";
+  // Safe calculation with edge case handling for single or zero data points
+  const validData = data.filter(d => typeof d.amount === 'number' && d.amount > 0);
+  const max = validData.length > 0 ? Math.max(...validData.map(d => Number(d.amount) || 0)) : 100;
+  
+  const points = validData.length > 1 
+    ? validData.map((d, i) => {
+        const x = 20 + (i * 80) / (validData.length - 1);
+        const y = 100 - ((Number(d.amount) || 0) / max) * 80;
+        return `${x},${y}`;
+      }).join(" ")
+    : validData.length === 1 
+    ? `60,${100 - (Number(validData[0].amount) || 0) / max * 80}`
+    : "";
 
   return (
     <motion.div 
@@ -77,12 +108,16 @@ export default function LineChartCard() {
       ) : (
         <>
           <svg width={120} height={120} viewBox="0 0 120 120" className="mx-auto">
-            {data.length > 0 ? (
+            {validData.length > 0 ? (
               <>
-                <polyline points={points} fill="none" stroke="#6366f1" strokeWidth={3} />
-                {data.map((d, i) => {
-                  const x = 20 + (i * 80) / (data.length - 1);
-                  const y = 100 - (d.amount / max) * 80;
+                {validData.length > 1 && (
+                  <polyline points={points} fill="none" stroke="#6366f1" strokeWidth={3} />
+                )}
+                {validData.map((d, i) => {
+                  const x = validData.length > 1 
+                    ? 20 + (i * 80) / (validData.length - 1)
+                    : 60;
+                  const y = 100 - ((Number(d.amount) || 0) / max) * 80;
                   return <circle key={i} cx={x} cy={y} r={4} fill="#6366f1" />;
                 })}
               </>
@@ -92,11 +127,11 @@ export default function LineChartCard() {
           </svg>
           
           <ul className="mt-2 text-sm">
-            {data.length === 0 ? (
+            {validData.length === 0 ? (
               <li className="text-gray-400">No data available.</li>
             ) : (
-              data.map((d, i) => (
-                <li key={i}>{d.month}: ₹{d.amount.toFixed(0)}</li>
+              validData.map((d, i) => (
+                <li key={i}>{d.month}: ₹{(Number(d.amount) || 0).toFixed(0)}</li>
               ))
             )}
           </ul>
